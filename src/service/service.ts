@@ -243,6 +243,20 @@ export class MinaService {
     }
   }
 
+  /** 只发 stop 的快速打断（省一次 pause 往返），用于配音前的语音打断。 */
+  async stopPlayFast(accountId: string, deviceId: string, current?: () => boolean): Promise<boolean> {
+    if (current?.() === false) return false;
+    this.cancelInterrupt(accountId, deviceId, current);
+    const client = this.getClient(accountId);
+    if (!client) return false;
+    try {
+      return await client.playerStopOnly(deviceId, current);
+    } catch (e) {
+      songloft.log.warn('[MinaService] stopPlayFast failed: ' + String(e));
+      return false;
+    }
+  }
+
   /**
    * 暂停播放
    */

@@ -221,6 +221,9 @@ function fuzzySubseqMatch(qRunes: string[], kwRunes: string[], maxGap: number): 
  * 接收对话消息，匹配已配置的口令关键词，执行对应动作
  */
 export class MusicCommandService {
+  /** 「外部搜索」已导入过的关键词 → 直接走本地，省掉重复的联网检索与导入。 */
+  private externalImported = new Set<string>();
+
   private configManager: ConfigManager;
   private accountManager: AccountManager;
   private minaService: MinaService;
@@ -1258,9 +1261,16 @@ export class MusicCommandService {
     // 立即停止定时器和重置状态，防止后续异步操作期间旧定时器触发
     pm.prepareForNewPlayback();
 
-    // 打断音箱当前播报（停止播放），不在此处播放 TTS 提示
+    // 打断音箱当前播报（停止播放），不在此处播放 TTS 提示。
+    // safe 模式沿用 pause+stop；其余模式只发 stop，省一次云端往返（约 1 秒）。
+    let earlyConfig: any = {};
+    try { earlyConfig = await this.configManager.getConfig(); } catch { earlyConfig = {}; }
     try {
-      await this.minaService.stopPlay(accountId, deviceId);
+      if (String(earlyConfig.song_switch_mode || 'parallel') === 'safe') {
+        await this.minaService.stopPlay(accountId, deviceId);
+      } else {
+        await this.minaService.stopPlayFast(accountId, deviceId);
+      }
     } catch (e) {
       songloft.log.warn('[MusicCommandService] Failed to interrupt broadcast: ' + String(e));
     }
@@ -1458,12 +1468,20 @@ export class MusicCommandService {
     accountId: string,
     deviceId: string,
   ): Promise<PlayedSong | null> {
+    // 同一首歌第二次说「外部搜索」时，本地已有导入版本，直接走本地（约 1.7s）
+    if (this.externalImported.has(songName.trim().toLowerCase())) {
+      songloft.log.info(`[MusicCommandService] External cache hit → 本地播放: ${songName}`);
+      return await this.executePlaySong(songName, accountId, deviceId, undefined, false);
+    }
+
     const external = await this.findExternalSongCandidate(songName, hint, true);
     if (!external) {
       songloft.log.warn(`[MusicCommandService] External-only search missed: ${songName}`);
       return null;
     }
-    return await this.playSongCandidate(external, pm, searchTerm, songName, accountId, deviceId);
+    const played = await this.playSongCandidate(external, pm, searchTerm, songName, accountId, deviceId);
+    if (played) this.externalImported.add(songName.trim().toLowerCase());
+    return played;
   }
 
   private async executePlaySongLocalFirst(
