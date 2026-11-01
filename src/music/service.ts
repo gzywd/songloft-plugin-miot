@@ -1265,11 +1265,15 @@ export class MusicCommandService {
     // safe 模式沿用 pause+stop；其余模式只发 stop，省一次云端往返（约 1 秒）。
     let earlyConfig: any = {};
     try { earlyConfig = await this.configManager.getConfig(); } catch { earlyConfig = {}; }
-    try {
-      await this.minaService.stopPlayFast(accountId, deviceId, undefined,
-        String(earlyConfig.song_switch_mode || 'parallel') === 'safe');
-    } catch (e) {
-      songloft.log.warn('[MusicCommandService] Failed to interrupt broadcast: ' + String(e));
+    // skip 模式：小爱的那句回复通常已经说完（消息记录里带着 answer），
+    // 再发一次 stop 纯浪费 1 秒，直接略过。
+    const switchMode = String(earlyConfig.song_switch_mode || 'parallel');
+    if (switchMode !== 'skip') {
+      try {
+        await this.minaService.stopPlayFast(accountId, deviceId, undefined, switchMode === 'safe');
+      } catch (e) {
+        songloft.log.warn('[MusicCommandService] Failed to interrupt broadcast: ' + String(e));
+      }
     }
 
     const config = await this.configManager.getConfig();
