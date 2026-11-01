@@ -347,13 +347,19 @@ export class MusicCommandService {
       memoryEnabled = pluginConfig.voice_memory_enabled;
       await this.memoryService.setMaxRecords(pluginConfig.voice_memory_max_records);
       if (options.current?.() === false) return false;
-      if (memoryEnabled) {
+      // 已命中点歌规则且句子里没有「刚才/那首/再来」这类指代时才跳过语音记忆（省约 0.5 秒）；
+      // 有指代词仍先查记忆，避免「播放刚才那首」被当成新歌名去搜。
+      const ruleCoversQuery = !!ruleResult && SEARCH_COMMAND_TYPES.has(ruleResult.command.type);
+      const memoryCue = /(刚才|上一首|那首|这首|再来|再放|换回|还是那)/.test(query);
+      if (memoryEnabled && (!ruleCoversQuery || memoryCue)) {
         const memoryHandled = await this.tryHandleMemory(query, accountId, msg.device_id);
         if (memoryHandled) {
           return true;
         }
-      } else {
+      } else if (!memoryEnabled) {
         songloft.log.info('[VoiceMemoryV2] miss reason="disabled"');
+      } else {
+        songloft.log.info('[VoiceMemoryV2] skip reason="rule_matched"');
       }
     } catch (error) {
       memoryEnabled = false;
