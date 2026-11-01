@@ -25,7 +25,7 @@ import type { PlaylistManager } from '../player/manager';
 import type { SongLocation, ArtistSongLocation } from '../indexing/manager';
 import type { MemoryRecord } from '../memory';
 import type { OnlineSearchResult } from '../voicecmd/online_searcher';
-import type { ConversationMessage, VoiceCommand, PlayMode, AIAnalysisResult, SearchPriority } from '../types';
+import type { ConversationMessage, VoiceCommand, PlayMode, AIAnalysisResult, SearchPriority, DeviceTargetRef } from '../types';
 import { getDefaultVoiceCommands } from '../voicecmd/defaults';
 import { conversationQuery } from '../conversation/query';
 export { getDefaultVoiceCommands } from '../voicecmd/defaults';
@@ -225,6 +225,8 @@ export class MusicCommandService {
   private externalImported = new Set<string>();
   /** 已临时扩成「全屋」的 manager（account:device），停止时还原单机。 */
   private wholeHomeActive = new Set<string>();
+  /** 全屋播放时的目标设备清单（account:device → targets），用于音量联动。 */
+  private wholeHomeTargets = new Map<string, DeviceTargetRef[]>();
 
   private configManager: ConfigManager;
   private accountManager: AccountManager;
@@ -1486,10 +1488,30 @@ export class MusicCommandService {
         return;
       }
       this.playlistManagerMap.setTargetOverride(accountId, deviceId, targets);
-      this.wholeHomeActive.add(`${accountId}:${deviceId}`);
+      const key = `${accountId}:${deviceId}`;
+      this.wholeHomeActive.add(key);
+      this.wholeHomeTargets.set(key, targets);
       songloft.log.info(`[MusicCommandService] whole-home targets=${targets.length} devices=${targets.map(t => t.device_id).join(',')}`);
+      // 音量对齐放后台做，不拖慢起播
+      void this.syncWholeHomeVolume(accountId, deviceId, targets);
     } catch (e) {
       songloft.log.warn('[MusicCommandService] whole-home expand failed: ' + String(e));
+    }
+  }
+
+  /** 全屋起播后把主设备当前音量复制到其余设备（各自独立音量，这里做一次统一）。 */
+  private async syncWholeHomeVolume(accountId: string, deviceId: string, targets: DeviceTargetRef[]): Promise<void> {
+    try {
+      const volume = await this.minaService.syncVolumeFromDevice(accountId, deviceId);
+      if (volume < 0) return;
+      await Promise.allSettled(
+        targets
+          .filter(t => !(t.account_id === accountId && t.device_id === deviceId))
+          .map(t => this.minaService.setVolume(t.account_id, t.device_id, volume)),
+      );
+      songloft.log.info(`[MusicCommandService] whole-home volume synced to ${volume}`);
+    } catch (e) {
+      songloft.log.warn('[MusicCommandService] whole-home volume sync failed: ' + String(e));
     }
   }
 
@@ -1978,7 +2000,15 @@ export class MusicCommandService {
     // 读回值就是设备真相，不需要 lockVolume 去挡云端「旧值」——那把锁是为了保护
     // 「插件刚下发、云端还没同步」的窗口，现在没有下发这一步了。
     updateDeviceStatusCache(accountId, deviceId, { volume });
-    await this.groupCoordinator?.fanOutSetVolume(accountId, deviceId, volume);
+    const whole = this.wholeHomeTargets.get(`${accountId}:${deviceId}`);
+    if (whole && whole.length > 1) {
+      await Promise.allSettled(whole
+        .filter(t => !(t.account_id === accountId && t.device_id === deviceId))
+        .map(t => this.minaService.setVolume(t.account_id, t.device_id, volume)));
+      songloft.log.info(`[MusicCommandService] whole-home volume applied to ${whole.length} devices: ${volume}`);
+    } else {
+      await this.groupCoordinator?.fanOutSetVolume(accountId, deviceId, volume);
+    }
     songloft.log.info(`[MusicCommandService] Volume synced from device: ${volume} (handled by 小爱, not re-applied; param=${param})`);
   }
 
@@ -2022,6 +2052,7 @@ export class MusicCommandService {
     const pm = await this.playlistManagerMap.getOrCreate(accountId, deviceId);
     await pm.stop();
     if (this.wholeHomeActive.delete(`${accountId}:${deviceId}`)) {
+      this.wholeHomeTargets.delete(`${accountId}:${deviceId}`);
       this.playlistManagerMap.setTargetOverride(accountId, deviceId, null);
       songloft.log.info('[MusicCommandService] whole-home restored to single device');
     }
