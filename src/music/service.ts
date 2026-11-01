@@ -154,7 +154,14 @@ const URL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 // resume 必须进入真实语音消息的固定控制匹配，否则停止后的「继续播放」无法恢复自动切歌（songloft-org/songloft#490）。
 const FIXED_CONTROL_COMMAND_TYPES = new Set(['set_play_mode', 'set_volume', 'favorite', 'next', 'previous', 'resume', 'stop', 'sleep_timer', 'cancel_sleep_timer', 'query_sleep_timer', 'play_index']);
 const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_playlist', 'play_artist']);
-const BUILTIN_STOP_KEYWORDS = ['暂停播放', '停止播放', '暂停音乐', '停一下', 'pause', 'stop', '暂停'];
+// 只保留明确指向「音乐/播放」的说法。原来的「暂停」「停一下」这类泛词会把
+// 「关闭次卧灯」「暂停」等与音乐无关的指令也当成停止音乐，直接把音箱正在放的
+// 故事/新闻打断，因此收窄成完整短语。
+const BUILTIN_STOP_KEYWORDS = ['暂停播放', '停止播放', '暂停音乐', '关掉音乐', '别播了', 'pause', 'stop'];
+
+// 明显属于故事/新闻/播客类的请求，直接放行给小爱自家音源，不进本地检索。
+const NON_MUSIC_REQUEST = /(故事|评书|相声|新闻|有声书|有声剧|播客|广播|儿歌|古诗|英语启蒙|小说|电台|脱口秀|课程|讲座)/;
+const EXPLICIT_STOP = /(停止播放|暂停播放|暂停音乐|关掉音乐|别播了)/;
 
 /** 只为有明确音乐请求线索的分析失败播报提示；未识别的普通请求仍交给小爱。 */
 function hasMusicRequestCue(query: string): boolean {
@@ -306,12 +313,25 @@ export class MusicCommandService {
       return false;
     }
 
+    // 故事/新闻/播客类请求直接放行：本地检索即使误命中也不抢播，交回小爱自家音源。
+    if (NON_MUSIC_REQUEST.test(query) && !/歌曲|歌手|歌单/.test(query)) {
+      songloft.log.info(`[MusicCommandService] [Rule] → 非音乐请求放行 query="${query}"`);
+      return false;
+    }
+
     // 控制与搜索命令共同匹配，避免控制词截走歌名/歌单名；胜出的控制仍先于 memory 和 AI 执行。
     songloft.log.info(`[MusicCommandService] [Rule] Matching query="${query}"`);
     const ruleResult = await this.matchRuleCommand(query);
     if (options.current?.() === false) return false;
     const fixedResult = ruleResult && FIXED_CONTROL_COMMAND_TYPES.has(ruleResult.command.type) ? ruleResult : null;
     if (fixedResult) {
+      // 泛控制词只在插件自己正在播时才接管；否则放行，避免打断小爱自家的故事/新闻。
+      const gatePm = this.playlistManagerMap.get(accountId, msg.device_id);
+      const ownsPlayback = !!gatePm && gatePm.isPlaying();
+      if (!ownsPlayback && !EXPLICIT_STOP.test(query.trim())) {
+        songloft.log.info(`[MusicCommandService] [Rule] → 忽略泛控制词(未在播放) keyword="${fixedResult.keyword}"`);
+        return false;
+      }
       songloft.log.info(`[MusicCommandService] [Rule] → Matched fixed control: type=${fixedResult.command.type} keyword="${fixedResult.keyword}" argument="${fixedResult.argument}"`);
       if (options.current?.() === false) return false;
       await this.executeCommand(fixedResult, accountId, msg.device_id, query, { current: options.current, nativeReply: msg.message.response.answer[0]?.content });
