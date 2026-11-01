@@ -887,6 +887,8 @@ export class PlaylistManager {
       ? (this.currentIndex < this.songs.length - 1 ? this.currentIndex + 1 : -1)
       : this.reserveNextIndex();
     if (nextIdx < 0) {
+      // 手动「下一首」到队尾时同样自动续播；单曲播放模式保留「播完这首停止」语义
+      if (this.playMode !== 'singlePlay' && await this.tryAutoContinue()) return true;
       songloft.log.info('[PlaylistManager] No next song, stopping');
       await this.stop();
       return false;
@@ -3610,6 +3612,73 @@ export class PlaylistManager {
     return this.trackPlayback(() => this.advanceToNextInternal());
   }
 
+
+  /**
+   * 队列播完后的自动续播。
+   * - library（默认）：切到主库「music」随机播放，永不停
+   * - same：本歌单内随机循环
+   * - off：保持原样，播完即停
+   * 故事/有声类歌单（名称含故事、评书、警长等）即便配置为 library 也只在本单内循环，
+   * 避免儿童睡前故事播完突然接一首流行歌。
+   */
+  private async tryAutoContinue(): Promise<boolean> {
+    let mode = 'library';
+    try {
+      const cfg: any = await this.configManager.getConfig();
+      mode = String(cfg?.auto_continue_mode || 'library');
+    } catch {
+      mode = 'library';
+    }
+    if (mode === 'off' || this.songs.length === 0) return false;
+
+    if (mode === 'library' && this.playlistId > 0) {
+      try {
+        const pl: any = await songloft.playlists.getById(this.playlistId);
+        const name = pl?.name ? String(pl.name) : '';
+        if (name && /(故事|评书|相声|有声|小说|电台|广播剧|儿歌|儿童|警长|睡前)/.test(name)) {
+          mode = 'same';
+          songloft.log.info(`[PlaylistManager] Auto-continue: story playlist "${name}" → same-loop`);
+        }
+      } catch {
+        /* 查不到名字就按主库处理 */
+      }
+    }
+
+    if (mode === 'same') {
+      if (this.songs.length < 2) return false;
+      let idx = Math.floor(Math.random() * this.songs.length);
+      if (idx === this.currentIndex) idx = (idx + 1) % this.songs.length;
+      this.currentIndex = idx;
+      this.randomPlayed = new Set([idx]);
+      this.playMode = 'random';
+      this.clearPendingNextIndex();
+      const ok = await this.playCurrent();
+      if (ok) {
+        await this.persistState();
+        songloft.log.info(`[PlaylistManager] Auto-continue: same playlist loop index=${idx}`);
+      }
+      return ok;
+    }
+
+    try {
+      const lists: any[] = await songloft.playlists.list();
+      const lib = (lists || []).find(p => p?.name === 'music') || (lists || []).find(p => p?.id === 3);
+      if (!lib) {
+        songloft.log.warn('[PlaylistManager] Auto-continue: library playlist not found');
+        return false;
+      }
+      const songs: any[] = await songloft.playlists.getSongs(lib.id, { limit: 100000 });
+      if (!songs || songs.length === 0) return false;
+      const idx = Math.floor(Math.random() * songs.length);
+      const ok = await this.playWithSongs(songs, idx, 'random', lib.name);
+      if (ok) songloft.log.info(`[PlaylistManager] Auto-continue: library=${lib.name} total=${songs.length} index=${idx}`);
+      return ok;
+    } catch (e) {
+      songloft.log.warn(`[PlaylistManager] Auto-continue failed: ${String(e)}`);
+      return false;
+    }
+  }
+
   private async advanceToNextInternal(): Promise<void> {
     songloft.log.info(`[PlaylistManager] Song finished, advancing from index=${this.currentIndex}`);
 
@@ -3669,6 +3738,7 @@ export class PlaylistManager {
       this.clearPendingNextIndex();
     }
     if (nextIdx < 0) {
+      if (await this.tryAutoContinue()) return;
       songloft.log.info('[PlaylistManager] No next song, playback complete');
       this.state = 'stopped';
       this.playStartTimeMs = 0;

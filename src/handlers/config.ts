@@ -118,6 +118,8 @@ export function registerConfigHandlers(
           conversation_poll_interval: config.conversation_poll_interval ?? 2,
           debug_log_enabled: !!config.debug_log_enabled,
           smart_resume_timeout: config.smart_resume_timeout ?? 30,
+          auto_continue_mode: (config.auto_continue_mode === 'off' || config.auto_continue_mode === 'same')
+            ? config.auto_continue_mode : 'library',
           hourly_chime_resume_enabled: !!config.hourly_chime_resume_enabled,
           max_song_index: config.max_song_index ?? 10000,
           server_host_status: getServerHostStatus(config.server_host),
@@ -332,6 +334,12 @@ export function registerConfigHandlers(
 
       if (body.hourly_chime_resume_enabled !== undefined) {
         config.hourly_chime_resume_enabled = body.hourly_chime_resume_enabled;
+      }
+
+      // 更新 auto_continue_mode（队列播完后是否自动续播）
+      if (body.auto_continue_mode !== undefined) {
+        const m = String(body.auto_continue_mode);
+        config.auto_continue_mode = (m === 'off' || m === 'same') ? m : 'library';
       }
 
       // 更新 smart_resume_timeout
