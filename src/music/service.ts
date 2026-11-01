@@ -153,7 +153,7 @@ const URL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 
 // resume 必须进入真实语音消息的固定控制匹配，否则停止后的「继续播放」无法恢复自动切歌（songloft-org/songloft#490）。
 const FIXED_CONTROL_COMMAND_TYPES = new Set(['set_play_mode', 'set_volume', 'favorite', 'next', 'previous', 'resume', 'stop', 'sleep_timer', 'cancel_sleep_timer', 'query_sleep_timer', 'play_index']);
-const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_song_external', 'play_playlist', 'play_artist']);
+const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_song_external', 'play_song_group', 'play_playlist', 'play_artist']);
 // 只保留明确指向「音乐/播放」的说法。原来的「暂停」「停一下」这类泛词会把
 // 「关闭次卧灯」「暂停」等与音乐无关的指令也当成停止音乐，直接把音箱正在放的
 // 故事/新闻打断，因此收窄成完整短语。
@@ -223,6 +223,8 @@ function fuzzySubseqMatch(qRunes: string[], kwRunes: string[], maxGap: number): 
 export class MusicCommandService {
   /** 「外部搜索」已导入过的关键词 → 直接走本地，省掉重复的联网检索与导入。 */
   private externalImported = new Set<string>();
+  /** 已临时扩成「全屋」的 manager（account:device），停止时还原单机。 */
+  private wholeHomeActive = new Set<string>();
 
   private configManager: ConfigManager;
   private accountManager: AccountManager;
@@ -930,6 +932,10 @@ export class MusicCommandService {
       case 'play_song_external':
         playedSong = await this.executePlaySong(result.argument, accountId, deviceId, undefined, true);
         break;
+      case 'play_song_group':
+        await this.expandToWholeHome(accountId, deviceId);
+        playedSong = await this.executePlaySong(result.argument, accountId, deviceId);
+        break;
       case 'play_artist':
         playedSong = await this.executePlayArtist(result.argument, accountId, deviceId);
         break;
@@ -1466,6 +1472,27 @@ export class MusicCommandService {
     return artistName ? { title, artist: artistName } : { title };
   }
 
+  /** 「全屋播放」：把当前 manager 的输出目标临时扩展到全部已托管设备（并发推送，误差很小）。 */
+  private async expandToWholeHome(accountId: string, deviceId: string): Promise<void> {
+    try {
+      const devices = await this.configManager.getDevices(accountId);
+      const targets = [{ account_id: accountId, device_id: deviceId }];
+      for (const d of devices) {
+        if (!d.managed || d.device_id === deviceId) continue;
+        targets.push({ account_id: accountId, device_id: d.device_id });
+      }
+      if (targets.length <= 1) {
+        songloft.log.warn('[MusicCommandService] whole-home: no other managed device');
+        return;
+      }
+      this.playlistManagerMap.setTargetOverride(accountId, deviceId, targets);
+      this.wholeHomeActive.add(`${accountId}:${deviceId}`);
+      songloft.log.info(`[MusicCommandService] whole-home targets=${targets.length} devices=${targets.map(t => t.device_id).join(',')}`);
+    } catch (e) {
+      songloft.log.warn('[MusicCommandService] whole-home expand failed: ' + String(e));
+    }
+  }
+
   /** 「外部搜索 xxx」专用：跳过本地库，强制走在线源（即便全局外部搜索开着也优先在线）。 */
   private async executePlaySongExternalOnly(
     songName: string,
@@ -1994,6 +2021,10 @@ export class MusicCommandService {
     this.cancelSleepTimer(accountId, deviceId);
     const pm = await this.playlistManagerMap.getOrCreate(accountId, deviceId);
     await pm.stop();
+    if (this.wholeHomeActive.delete(`${accountId}:${deviceId}`)) {
+      this.playlistManagerMap.setTargetOverride(accountId, deviceId, null);
+      songloft.log.info('[MusicCommandService] whole-home restored to single device');
+    }
     songloft.log.info(`[MusicCommandService] Playback stopped`);
   }
 

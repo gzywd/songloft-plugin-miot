@@ -4039,6 +4039,8 @@ export class PlaylistManagerMap {
   // 分组快照（仅含 ≥2 成员的组）：同步可读，避免 get()/getOrCreate 每次读存储、也避免惰性索引过期。
   // 由 refreshGroups() 在启动与分组增删改时刷新。
   private groupsSnapshot: DeviceGroup[] = [];
+  /** 临时输出目标覆盖（「全屋播放」用）：key='acct:dev'，生产代码里由语音指令写入/清除。 */
+  private targetOverrides = new Map<string, DeviceTargetRef[]>();
   private minaService: MinaService;
   private configManager: ConfigManager;
 
@@ -4124,8 +4126,19 @@ export class PlaylistManagerMap {
    * 分组设备解析到该组共享的 manager（输出目标为组内全部音箱）；独立设备解析到自身 manager。
    * 若设备配置中存有 playlistId，则新建时自动恢复播放列表（不自动开始播放）。
    */
+  /** 临时把某设备的输出目标扩成一组设备（全屋播放）；传 null 清除。 */
+  setTargetOverride(accountId: string, deviceId: string, targets: DeviceTargetRef[] | null): void {
+    const key = this.makeKey(accountId, deviceId);
+    if (targets && targets.length > 0) this.targetOverrides.set(key, targets.slice());
+    else this.targetOverrides.delete(key);
+  }
+
   async getOrCreate(accountId: string, deviceId: string): Promise<PlaylistManager> {
-    const { managerKey, primary, targets } = this.resolveTargetSync(accountId, deviceId);
+    const resolved = this.resolveTargetSync(accountId, deviceId);
+    const managerKey = resolved.managerKey;
+    const primary = resolved.primary;
+    const override = this.targetOverrides.get(this.makeKey(accountId, deviceId));
+    const targets = (override && override.length > 0) ? override.slice() : resolved.targets;
 
     const existing = this.managers.get(managerKey);
     if (existing) {

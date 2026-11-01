@@ -528,6 +528,8 @@ export function registerPlaylistHandlers(
       }
       const lastPosition = manager.getStatus().position;
       await manager.stop();
+      // 停止后清除「全屋播放」的临时目标，下一次恢复单机输出
+      playlistManagerMap.setTargetOverride(account_id, device_id, null);
       updateDeviceStatusCache(account_id, device_id, { state: 'stopped', position: lastPosition });
       return jsonResponse({ success: true, data: { message: 'playlist stopped' } });
     } catch (e: any) {
