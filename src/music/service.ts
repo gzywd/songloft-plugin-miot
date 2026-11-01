@@ -1266,11 +1266,8 @@ export class MusicCommandService {
     let earlyConfig: any = {};
     try { earlyConfig = await this.configManager.getConfig(); } catch { earlyConfig = {}; }
     try {
-      if (String(earlyConfig.song_switch_mode || 'parallel') === 'safe') {
-        await this.minaService.stopPlay(accountId, deviceId);
-      } else {
-        await this.minaService.stopPlayFast(accountId, deviceId);
-      }
+      await this.minaService.stopPlayFast(accountId, deviceId, undefined,
+        String(earlyConfig.song_switch_mode || 'parallel') === 'safe');
     } catch (e) {
       songloft.log.warn('[MusicCommandService] Failed to interrupt broadcast: ' + String(e));
     }

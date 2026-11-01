@@ -243,14 +243,18 @@ export class MinaService {
     }
   }
 
-  /** 只发 stop 的快速打断（省一次 pause 往返），用于配音前的语音打断。 */
-  async stopPlayFast(accountId: string, deviceId: string, current?: () => boolean): Promise<boolean> {
+  /**
+   * 点歌过程中的主动打断：只发 stop（或 pause+stop），且**不触发 onControl**。
+   * 原实现走 cancelInterrupt，未带 current 时会通知设备控制，
+   * 反过来把正在执行的这条语音任务取消掉（表现为「语音任务已取消」后不播）。
+   */
+  async stopPlayFast(accountId: string, deviceId: string, current?: () => boolean, pauseFirst = false): Promise<boolean> {
     if (current?.() === false) return false;
-    this.cancelInterrupt(accountId, deviceId, current);
+    this.interruptions.delete(this.playbackKey(accountId, deviceId));
     const client = this.getClient(accountId);
     if (!client) return false;
     try {
-      return await client.playerStopOnly(deviceId, current);
+      return pauseFirst ? await client.playerStop(deviceId, current) : await client.playerStopOnly(deviceId, current);
     } catch (e) {
       songloft.log.warn('[MinaService] stopPlayFast failed: ' + String(e));
       return false;
