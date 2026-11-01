@@ -472,6 +472,11 @@ export class MinaHTTPClient {
     return this.playerOperation(deviceId, 'stop', isCurrent);
   }
 
+  /** 只发 stop（不发 pause），用于切歌时省掉一次云端往返。 */
+  async playerStopOnly(deviceId: string, isCurrent?: () => boolean): Promise<boolean> {
+    return this.playerOperation(deviceId, 'stop', isCurrent);
+  }
+
   /** 中断回答专用：每条指令在设备队列内发送前检查是否已被新操作取代。 */
   async playerStopGuarded(deviceId: string, isCurrent: () => boolean): Promise<'stopped' | 'failed' | 'cancelled'> {
     if (!isCurrent()) return 'cancelled';

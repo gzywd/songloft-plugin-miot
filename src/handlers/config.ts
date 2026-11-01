@@ -120,6 +120,8 @@ export function registerConfigHandlers(
           smart_resume_timeout: config.smart_resume_timeout ?? 30,
           auto_continue_mode: (config.auto_continue_mode === 'off' || config.auto_continue_mode === 'same')
             ? config.auto_continue_mode : 'library',
+          song_switch_mode: (config.song_switch_mode === 'safe' || config.song_switch_mode === 'skip')
+            ? config.song_switch_mode : 'parallel',
           hourly_chime_resume_enabled: !!config.hourly_chime_resume_enabled,
           max_song_index: config.max_song_index ?? 10000,
           server_host_status: getServerHostStatus(config.server_host),
@@ -340,6 +342,12 @@ export function registerConfigHandlers(
       if (body.auto_continue_mode !== undefined) {
         const m = String(body.auto_continue_mode);
         config.auto_continue_mode = (m === 'off' || m === 'same') ? m : 'library';
+      }
+
+      // 更新 song_switch_mode（切歌预处理）
+      if (body.song_switch_mode !== undefined) {
+        const m = String(body.song_switch_mode);
+        config.song_switch_mode = (m === 'safe' || m === 'skip') ? m : 'parallel';
       }
 
       // 更新 smart_resume_timeout

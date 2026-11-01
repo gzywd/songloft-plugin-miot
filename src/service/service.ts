@@ -177,24 +177,38 @@ export class MinaService {
       return false;
     }
 
-    try {
-      // pause 可能被固件忽略，或只保留一个可被语音/自然结束恢复的旧媒体上下文。
-      // 切歌本来就要替换旧流，复用 pause → stop 清掉它后再推新 URL（#481）。
+    let config: any = {};
+    try { config = await this.configManager.getConfig(); } catch { config = {}; }
+    // 切歌延迟主要来自 pause→stop→play 三次云端往返（每次约 1 秒）。
+    // safe=原来的 pause+stop；parallel=只发 stop 并与型号查询并行；skip=不预停止直接替换流。
+    const switchMode = String(config.song_switch_mode || 'parallel');
+
+    let prestop: Promise<void> | null = null;
+    if (switchMode !== 'skip') {
       const startedAt = Date.now();
-      const stopped = current ? (await client.playerStopGuarded(deviceId, current)) === 'stopped' : await client.playerStop(deviceId);
-      if (current?.() === false) return false;
-      songloft.log.info(`[MinaService] Pre-stop before play device=${deviceId} accepted=${stopped} elapsedMs=${Date.now() - startedAt}`);
-      if (!stopped) {
-        songloft.log.warn('[MinaService] Pre-stop rejected, continuing with replacement URL');
-      }
-    } catch (e) {
-      songloft.log.warn('[MinaService] Pre-stop before play failed, continuing: ' + String(e));
+      prestop = (async () => {
+        try {
+          const stopped = switchMode === 'safe'
+            ? (current ? (await client.playerStopGuarded(deviceId, current)) === 'stopped' : await client.playerStop(deviceId))
+            : await client.playerStopOnly(deviceId, current);
+          songloft.log.info(`[MinaService] Pre-stop(${switchMode}) device=${deviceId} accepted=${stopped} elapsedMs=${Date.now() - startedAt}`);
+          if (!stopped) songloft.log.warn('[MinaService] Pre-stop rejected, continuing with replacement URL');
+        } catch (e) {
+          songloft.log.warn('[MinaService] Pre-stop before play failed, continuing: ' + String(e));
+        }
+      })();
     }
 
+    let hardware = '';
     try {
-      // 获取设备硬件型号用于选择播放接口
-      const { hardware } = await this.getDeviceIdentity(client, deviceId);
-      const config = await this.configManager.getConfig();
+      const identityP = this.getDeviceIdentity(client, deviceId).catch(() => ({ hardware: '' } as any));
+      const identity: any = await identityP;
+      hardware = identity?.hardware || '';
+    } catch { hardware = ''; }
+    if (prestop) await prestop;
+    if (current?.() === false) return false;
+
+    try {
       const disabledModels = config.music_api_model_disabled || [];
       const keepLight = !!config.indicator_light_enabled;
       const customAudioId = config.default_cover_id;

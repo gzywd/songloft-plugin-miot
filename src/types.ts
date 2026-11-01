@@ -195,6 +195,8 @@ export interface PluginConfig {
   smart_resume_timeout: number;
   /** 队列播完后的行为：off 停止 / same 本歌单随机循环 / library 转主库随机 */
   auto_continue_mode: 'off' | 'same' | 'library';
+  /** 切歌前的预处理：safe=pause+stop / parallel=只stop并并行查型号（默认）/ skip=直接替换 */
+  song_switch_mode: 'safe' | 'parallel' | 'skip';
   hourly_chime_resume_enabled?: boolean; // 整点报时后续播，默认关闭
   max_song_index: number;
   ai_config: AIConfig;
