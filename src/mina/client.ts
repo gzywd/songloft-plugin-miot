@@ -83,6 +83,8 @@ export class MinaHTTPClient {
   private userAgent: string;
   private onTokenExpired?: () => Promise<boolean>;
   private ubusQueues = new Map<string, UbusQueue>();
+  /** 歌名/歌手 → 小爱曲库 audioID，用于「先播后查」的歌词补全。 */
+  private audioIdCache = new Map<string, string>();
   private statusQueries = new Map<string, StatusQuery>();
 
   constructor(tokenInfo: XiaomiTokenInfo, onTokenExpired?: () => Promise<boolean>) {
@@ -185,7 +187,18 @@ export class MinaHTTPClient {
     if (useMusicAPI) {
       const fallbackAudioId = customAudioId || DEFAULT_MUSIC_AUDIO_ID;
       if (lyricsMode?.enabled) {
-        const audioId = await this.searchAudioId(lyricsMode.metadata || lyricsMode.songName || '', fallbackAudioId);
+        // 先播后查：首播用默认封面 ID 立即出声，audioID 在后台补查并缓存，
+        // 下次同一首直接命中缓存（省掉约 1 秒的云端检索）。
+        const target = lyricsMode.metadata || lyricsMode.songName || '';
+        const parsedMeta = this.normalizePlayMetadata(target);
+        const audioKey = `${parsedMeta.title || ''}|${parsedMeta.artist || ''}`;
+        let audioId = this.audioIdCache.get(audioKey) || '';
+        if (!audioId) {
+          audioId = fallbackAudioId;
+          void this.searchAudioId(target, fallbackAudioId)
+            .then((id) => { if (id && id !== fallbackAudioId) this.audioIdCache.set(audioKey, id); })
+            .catch(() => { /* 补查失败就继续用默认封面 */ });
+        }
         const displayName = this.formatPlayMetadataForLog(lyricsMode.metadata || lyricsMode.songName || '');
         songloft.log.info(`[MinaClient] touchscreen lyrics selected audioID=${audioId} fallbackAudioID=${fallbackAudioId} song=${displayName}`);
         // xiaomusic 的 continue_play 通过 _type=1 设置 audio_type=MUSIC；这是触屏歌词/封面的前提。
