@@ -91,17 +91,17 @@ export class OnlineSearcher {
   /**
    * 检查是否配置了外部搜索源（总开关开启且至少有一个启用且有 url 的源）
    */
-  async isExternalSearchConfigured(): Promise<boolean> {
-    const sources = await this.getEnabledSources();
+  async isExternalSearchConfigured(force = false): Promise<boolean> {
+    const sources = await this.getEnabledSources(force);
     return sources.length > 0;
   }
 
   /**
    * 获取当前生效的外部搜索源列表（总开关关闭返回空；数组顺序即优先级）
    */
-  private async getEnabledSources(): Promise<ExternalSearchSource[]> {
+  private async getEnabledSources(force = false): Promise<ExternalSearchSource[]> {
     const config = await this.configManager.getConfig();
-    if (!config.external_search_enabled) return [];
+    if (!config.external_search_enabled && !force) return [];
     return config.external_search_sources.filter((s) => s.enabled && (s.url || '').trim() !== '');
   }
 
@@ -191,13 +191,14 @@ export class OnlineSearcher {
   async search(
     keyword: string,
     hint: { title: string; artist?: string; duration?: number } | null,
+    opts?: { force?: boolean },
   ): Promise<OnlineSearchResult | null> {
     // 保留正常词间空格；去空白变体仅在源明确未命中后尝试。
     const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
     keyword = normalize(keyword);
     if (!keyword) return null;
     hint = hint ? { ...hint, title: normalize(hint.title), ...(hint.artist !== undefined ? { artist: normalize(hint.artist) } : {}) } : null;
-    const sources = await this.getEnabledSources();
+    const sources = await this.getEnabledSources(opts?.force === true);
     if (sources.length === 0) return null;
 
     const config = await this.configManager.getConfig();

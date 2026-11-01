@@ -153,7 +153,7 @@ const URL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 
 // resume 必须进入真实语音消息的固定控制匹配，否则停止后的「继续播放」无法恢复自动切歌（songloft-org/songloft#490）。
 const FIXED_CONTROL_COMMAND_TYPES = new Set(['set_play_mode', 'set_volume', 'favorite', 'next', 'previous', 'resume', 'stop', 'sleep_timer', 'cancel_sleep_timer', 'query_sleep_timer', 'play_index']);
-const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_playlist', 'play_artist']);
+const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_song_external', 'play_playlist', 'play_artist']);
 // 只保留明确指向「音乐/播放」的说法。原来的「暂停」「停一下」这类泛词会把
 // 「关闭次卧灯」「暂停」等与音乐无关的指令也当成停止音乐，直接把音箱正在放的
 // 故事/新闻打断，因此收窄成完整短语。
@@ -918,6 +918,9 @@ export class MusicCommandService {
       case 'play_song':
         playedSong = await this.executePlaySong(result.argument, accountId, deviceId);
         break;
+      case 'play_song_external':
+        playedSong = await this.executePlaySong(result.argument, accountId, deviceId, undefined, true);
+        break;
       case 'play_artist':
         playedSong = await this.executePlayArtist(result.argument, accountId, deviceId);
         break;
@@ -1234,7 +1237,7 @@ export class MusicCommandService {
    * 通过 IndexingManager 模糊匹配歌曲名，获取所在歌单及索引，然后调用 PlaylistManager 播放
    * 翻译自 Go 版本: voicecmd/engine.go executePlaySong
    */
-  private async executePlaySong(songName: string, accountId: string, deviceId: string, artist?: string): Promise<PlayedSong | null> {
+  private async executePlaySong(songName: string, accountId: string, deviceId: string, artist?: string, forceExternal = false): Promise<PlayedSong | null> {
     this.cancelPendingResume(accountId, deviceId);
     const pm = await this.playlistManagerMap.getOrCreate(accountId, deviceId);
 
@@ -1277,6 +1280,9 @@ export class MusicCommandService {
 
     const searchTask = async (): Promise<PlayedSong | null> => {
       const result = await (async () => {
+        if (forceExternal) {
+          return this.executePlaySongExternalOnly(songName, searchTerm, hint, pm, accountId, deviceId);
+        }
         switch (priority) {
           case 'local_first':
             return this.executePlaySongLocalFirst(songName, searchTerm, hint, pm, accountId, deviceId);
@@ -1441,6 +1447,23 @@ export class MusicCommandService {
     if (!title) return null;
     const artistName = artist?.trim();
     return artistName ? { title, artist: artistName } : { title };
+  }
+
+  /** 「外部搜索 xxx」专用：跳过本地库，强制走在线源（即便全局外部搜索开着也优先在线）。 */
+  private async executePlaySongExternalOnly(
+    songName: string,
+    searchTerm: string,
+    hint: { title: string; artist?: string; duration?: number } | null,
+    pm: PlaylistManager,
+    accountId: string,
+    deviceId: string,
+  ): Promise<PlayedSong | null> {
+    const external = await this.findExternalSongCandidate(songName, hint, true);
+    if (!external) {
+      songloft.log.warn(`[MusicCommandService] External-only search missed: ${songName}`);
+      return null;
+    }
+    return await this.playSongCandidate(external, pm, searchTerm, songName, accountId, deviceId);
   }
 
   private async executePlaySongLocalFirst(
@@ -1684,13 +1707,14 @@ export class MusicCommandService {
   private async findExternalSongCandidate(
     songName: string,
     hint: { title: string; artist?: string; duration?: number } | null,
+    force = false,
   ): Promise<SongSearchCandidate | null> {
-    if (!(await this.onlineSearcher.isExternalSearchConfigured())) {
+    if (!(await this.onlineSearcher.isExternalSearchConfigured(force))) {
       songloft.log.info('[MusicCommandService] External search not configured, skip online search');
       return null;
     }
 
-    const song = await this.onlineSearcher.search(songName, hint);
+    const song = await this.onlineSearcher.search(songName, hint, { force });
     if (!song) {
       songloft.log.warn(`[MusicCommandService] Online search missed for: ${songName}`);
       return null;
