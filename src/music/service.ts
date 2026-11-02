@@ -1854,24 +1854,56 @@ export class MusicCommandService {
   }
 
   /**
-   * 为「整句被识别成一个歌名」的情况生成候选：
-   * ① 按连接词切出前半句（你能不能 / 然后 / 顺便 / 帮我…）
-   * ② 在其基础上逐字截尾（最多 4 次，最少保留 3 字）
-   * 只在原句搜不到时调用，命中即用，避免一次失败就整首放弃。
+   * 语音识别噪声清洗：为「整句被识别成歌名」的情况生成候选。
+   *
+   * 原始索引查询只做一次，未命中才走这里（命中即用，最多试几条）。
+   * 覆盖的常见脏数据：
+   *   ① 句尾语气词（播放灰色头像吧 / 呢 / 啊）
+   *   ② 点歌量词（播放一首 / 一下 / 一遍 灰色头像）
+   *   ③ 重复整句（灰色头像灰色头像）
+   *   ④ 歌手+歌名（许嵩的灰色头像 / 灰色头像许嵩的）
+   *   ⑤ 多意图粘连（播放灰色头像然后关灯 / 你能不能）
+   *   ⑥ 识别出的空格（灰 色 头 像）
+   *   ⑦ 尾部多吞了几个字（逐字截尾，保底 3 字）
    */
   private buildSearchAlternatives(term: string): string[] {
     const raw = String(term || '').trim();
     if (!raw) return [];
+    const seen = new Set<string>([raw]);
     const out: string[] = [];
-    const SPLIT = /(你能不能|可不可以|能不能|要不要|然后|顺便|还有|帮我|请帮我|麻烦)/;
-    const head = raw.split(SPLIT)[0].trim();
-    if (head && head !== raw && Array.from(head).length >= 2) out.push(head);
+    const push = (v: string) => {
+      const t = String(v || '').replace(/^[\s,，。.、]+|[\s,，。.、!！?？]+$/g, '').trim();
+      if (Array.from(t).length < 2 || seen.has(t)) return;
+      seen.add(t);
+      out.push(t);
+    };
 
-    const base = head && Array.from(head).length >= 2 ? head : raw;
+    push(raw);
+    push(raw.replace(/\s+/g, ''));                       // ⑥ 去空格
+
+    let cur = raw.replace(/\s+/g, '');
+    cur = cur.replace(/[吧呢啊呀哦嘛呗啦哈哟]+$/g, '');      // ① 句尾语气词
+    push(cur);
+
+    cur = cur.replace(/^(请|麻烦|帮我)?(播放|放|来)(一首|一下|一遍|一个|首|个|点|支)?/g, ''); // ② 量词（多余的"播放"也顺带剥掉）
+    push(cur);
+
+    const dup = cur.match(/^(.{2,})\1$/);                  // ③ 重复整句
+    if (dup) push(dup[1]);
+
+    const byDe = cur.split('的').map(x => x.trim()).filter(Boolean); // ④ 歌手+歌名
+    if (byDe.length === 2) { push(byDe[1]); push(byDe[0]); }
+
+    // ⑤ 多意图粘连：连接词切前半句
+    const SPLIT = /(你能不能|可不可以|能不能|要不要|然后|顺便|还有|帮我|请帮我|麻烦|接着|再把|顺便把)/;
+    const head = cur.split(SPLIT)[0].trim();
+    push(head);
+
+    // ⑦ 逐字截尾（保底 3 字，最多 5 次）
+    const base = Array.from(head).length >= 3 ? head : cur;
     const chars = Array.from(base);
-    for (let cut = 1; cut <= 4 && chars.length - cut >= 3; cut++) {
-      const cand = chars.slice(0, chars.length - cut).join('').trim();
-      if (cand && cand !== raw && !out.includes(cand)) out.push(cand);
+    for (let cut = 1; cut <= 5 && chars.length - cut >= 3; cut++) {
+      push(chars.slice(0, chars.length - cut).join(''));
     }
     return out;
   }
