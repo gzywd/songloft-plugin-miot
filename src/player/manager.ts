@@ -66,6 +66,8 @@ const EXTERNAL_RESUME_POLL_INTERVAL_MS = 15000;
 const EXTERNAL_RESUME_POLL_MAX_MS = 600000;
 /** 连续命中"设备在播放"多少次才确认为真实恢复（与 EXTERNAL_STOP_CONFIRM_COUNT 对称） */
 const EXTERNAL_RESUME_CONFIRM_COUNT = 2;
+/** 距上次成功推流超过该时长，就不再认为设备上的播放属于我们（默认 3 分钟）。 */
+const EXTERNAL_RESUME_OWNERSHIP_MS = 180000;
 
 /**
  * URL 下发「假失败」核实参数（songloft-org/songloft-plugin-miot#98）。
@@ -385,6 +387,8 @@ export class PlaylistManager {
   private resumePollTimer: any = null;  // 定时器ID（后台探测外部恢复，见 EXTERNAL_RESUME_* 常量）
   private resumePollStartedAt: number = 0;
   private resumePollHits: number = 0;   // 连续探测到设备"在播放"的次数
+  /** 上次成功推流的时间戳：用于判断设备上「正在播放」的是不是我们的流。 */
+  private lastPushAtMs: number = 0;
   private durationProbeTimer: any = null; // 定时器ID（duration==0 时兜底切歌探测，见 DURATION_PROBE_* 常量）
   private maxProbePosition: number = 0;   // 循环回零探测：本轮见过的最大设备 position，用于判定是否回零
   private tailProbeTimer: any = null;     // 定时器ID（duration>0 尾部设备进度校验，见 TAIL_PROBE_* 常量，#481）
@@ -865,7 +869,9 @@ export class PlaylistManager {
     // 清掉重载续播锚点：停止之后重载不该再自动出声（#96）
     await this.persistState();
 
-    this.startResumePoll();
+    // 主动停止后不再做「外部恢复」接管：设备上接着放的很可能是小爱自家的故事/新闻，
+    // 被误认成我们的队列后，一句「下一首」就会把故事切成歌（2026-11-02 事故）。
+    // playCurrent 失败路径的兜底网保留，那里刚推过流，有 lastPushAtMs 兜底。
   }
 
   /**
@@ -1916,6 +1922,9 @@ export class PlaylistManager {
 
     // 下发到所有目标设备（分组时为组内全部音箱；传结构化歌曲信息供触屏歌词模式匹配曲库）。
     // 至少一台成功即视为成功；个别成员离线/失败不影响整组继续（自动切歌定时器仍以本机时长驱动）。
+    // 推流动作时间（成功或假失败都记）：外部恢复只在这之后的一小段时间内接管，
+    // 保证 #98 那种「下发报错但设备其实在放」的兜底网仍然有效。
+    this.lastPushAtMs = Date.now();
     const ok = await this.forEachTarget('playURL', t => this.minaService.playURL(t.account_id, t.device_id, songURL, {
       title: song.title,
       artist: song.artist,
@@ -1937,6 +1946,7 @@ export class PlaylistManager {
 
     if (this.externalPlayback || epoch !== this.playbackEpoch || !isCurrent()) return false;
     this.clearVoiceSuspend();
+    this.lastPushAtMs = Date.now();
     this.state = 'playing';
     this.hardStopped = false;
     this.pausedPositionSec = 0;
@@ -3494,6 +3504,13 @@ export class PlaylistManager {
     if (this.state !== 'stopped' || this.songs.length === 0) return;
     const song = this.getCurrentSong();
     if (!song) return;
+    // 只有「刚刚推过流」才可能是我们的播放。否则设备上放的更可能是小爱自家的
+    // 故事/新闻（status 同样是 1，且不上报流长，matchDeviceStream 只能给 unknown），
+    // 一旦接管就会把故事当成我们的队列，之后说「下一首」直接把故事切成歌。
+    if (Date.now() - this.lastPushAtMs > EXTERNAL_RESUME_OWNERSHIP_MS) {
+      songloft.log.info('[PlaylistManager] External resume ignored: no recent push (device likely playing its own content)');
+      return;
+    }
 
     this.state = 'playing';
     this.hardStopped = false;

@@ -16,8 +16,8 @@ export function getDefaultVoiceCommands(): VoiceCommand[] {
     { type: 'set_volume', keywords: ['设置音量', '音量调到', '音量', '声音', '声音调到'], param: 'absolute', enabled: true },
     { type: 'set_volume', keywords: ['大声一点', '声音大一点', '音量大一点'], param: 'up', enabled: true },
     { type: 'set_volume', keywords: ['小声一点', '声音小一点', '音量小一点'], param: 'down', enabled: true },
-    { type: 'next', keywords: ['下一首', '切歌', '换一首', '下一曲'], enabled: true },
-    { type: 'previous', keywords: ['上一首', '上一曲'], enabled: true },
+    { type: 'next', keywords: ['下一首', '切歌', '换一首', '下一曲', '下一个', '下一集', '下集'], enabled: true },
+    { type: 'previous', keywords: ['上一首', '上一曲', '上一个', '上一集', '上集'], enabled: true },
     { type: 'resume', keywords: ['继续播放', '恢复播放', '接着播', '接着放', 'resume'], enabled: true },
     // 去掉「关闭/关机/暂停/停止」等泛词：否则「关闭次卧灯」会被当成停止音乐
     { type: 'stop', keywords: ['停止播放', '暂停播放', '暂停音乐', '关掉音乐', '别播了', '暂停', 'pause', 'stop'], enabled: true },
