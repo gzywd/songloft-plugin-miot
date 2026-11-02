@@ -163,6 +163,13 @@ const BUILTIN_STOP_KEYWORDS = ['暂停播放', '停止播放', '暂停音乐', '
 const NON_MUSIC_REQUEST = /(故事|评书|相声|新闻|有声书|有声剧|播客|广播|儿歌|古诗|英语启蒙|小说|电台|脱口秀|课程|讲座)/;
 const EXPLICIT_STOP = /(停止播放|暂停播放|暂停音乐|关掉音乐|别播了)/;
 
+// 「播放下一集 / 播放下一个」这类相对控制：点歌词「播放」会把后半段当歌名，
+// 去本地库搜到「下一个天亮」之类的歌，顺手把正在放的故事停掉。
+const RELATIVE_NEXT = ['下个', '下一个', '下集', '下一集', '下首', '下一首', '下一曲', '下章', '下一章', '下回', '下一回'];
+const RELATIVE_PREV = ['上个', '上一个', '上集', '上一集', '上首', '上一首', '上一曲', '上章', '上一章', '上回', '上一回'];
+// 故事类序号：第三集、十二回、第 3 章
+const STORY_ORDINAL = /^第?[0-9一二三四五六七八九十百]+[集章回节]$/;
+
 /** 只为有明确音乐请求线索的分析失败播报提示；未识别的普通请求仍交给小爱。 */
 function hasMusicRequestCue(query: string): boolean {
   return /播放|点播|(?:听|播|放|来)[^，。！？!?]*(?:音乐|歌曲|歌单|专辑)|(?:来|放|播|听)(?:一|两|几|[0-9]+)首/.test(query);
@@ -801,7 +808,43 @@ export class MusicCommandService {
 
   /** 真实语音与规则测试共用匹配；内置停止仅在所有已启用口令都未命中时兜底。 */
   private async matchRuleCommand(query: string): Promise<MatchResult | null> {
-    return await this.matchCommand(query) ?? this.matchBuiltinStopCommand(query);
+    return this.normalizeRelativeCommand(
+      await this.matchCommand(query) ?? this.matchBuiltinStopCommand(query),
+    );
+  }
+
+  /**
+   * 「播放下一集 / 播放下一个」这类相对指令归一化。
+   *
+   * 点歌词里的泛词「播放」会把后半段当成歌名（argument="下一个"），去本地库模糊搜，
+   * 命中「下一个天亮」就直接起播，还先把设备上正在放的小爱原生故事停掉。
+   *
+   * 处理：参数是相对控制词 → 改写成 next/previous，交给固定控制闸门
+   * （插件自己没在播时自动放行，不会碰小爱的故事）；带集/章/回的序号直接放行。
+   */
+  private normalizeRelativeCommand(result: MatchResult | null): MatchResult | null {
+    if (!result || !SEARCH_COMMAND_TYPES.has(result.command.type)) return result;
+    const arg = String(result.argument || '').replace(/[\s，。！？、,.!?]/g, '');
+    if (!arg) return result;
+
+    const asControl = (type: 'next' | 'previous'): MatchResult => {
+      songloft.log.info(
+        `[MusicCommandService] [Rule] → 相对指令归一化: "${arg}" 视为 ${type}`,
+      );
+      return { ...result, command: { ...result.command, type }, argument: '' };
+    };
+
+    if (RELATIVE_NEXT.includes(arg)) return asControl('next');
+    if (RELATIVE_PREV.includes(arg)) return asControl('previous');
+
+    // 「第二集」「下一章节」这类明显在说故事，直接放行给小爱
+    if (STORY_ORDINAL.test(arg) || /[集章回]$/.test(arg)) {
+      songloft.log.info(
+        `[MusicCommandService] [Rule] → 故事类相对指令放行 argument="${arg}"`,
+      );
+      return null;
+    }
+    return result;
   }
 
   /**
