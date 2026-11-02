@@ -1481,6 +1481,7 @@ export class MusicCommandService {
       // 立体声配对的两台其实是一套左右声道：全屋时只推一台，否则会重复出声、进度还打架
       const cfg: any = await this.configManager.getConfig();
       const pairs: string[][] = Array.isArray(cfg?.stereo_pairs) ? cfg.stereo_pairs : [];
+      const exclude: string[] = Array.isArray(cfg?.whole_home_exclude) ? cfg.whole_home_exclude : [];
       const skip = new Set<string>();
       for (const pair of pairs) {
         if (!Array.isArray(pair) || pair.length !== 2) continue;
@@ -1494,6 +1495,10 @@ export class MusicCommandService {
         if (!d.managed || d.device_id === deviceId) continue;
         if (skip.has(d.device_id)) {
           songloft.log.info(`[MusicCommandService] whole-home skip stereo partner=${d.device_id}`);
+          continue;
+        }
+        if (exclude.includes(d.device_id)) {
+          songloft.log.info(`[MusicCommandService] whole-home skip excluded device=${d.device_id}`);
           continue;
         }
         targets.push({ account_id: accountId, device_id: d.device_id });

@@ -98,6 +98,7 @@ function defaultPluginConfig(): PluginConfig {
     debug_log_enabled: false,
     smart_resume_timeout: 30,
     auto_continue_mode: 'library',
+    whole_home_exclude: [],
     stereo_pairs: [],
     song_switch_mode: 'parallel',
     hourly_chime_resume_enabled: false,

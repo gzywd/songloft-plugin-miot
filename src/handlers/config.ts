@@ -120,6 +120,7 @@ export function registerConfigHandlers(
           smart_resume_timeout: config.smart_resume_timeout ?? 30,
           auto_continue_mode: (config.auto_continue_mode === 'off' || config.auto_continue_mode === 'same')
             ? config.auto_continue_mode : 'library',
+          whole_home_exclude: Array.isArray(config.whole_home_exclude) ? config.whole_home_exclude : [],
           stereo_pairs: Array.isArray(config.stereo_pairs) ? config.stereo_pairs : [],
           song_switch_mode: (config.song_switch_mode === 'safe' || config.song_switch_mode === 'skip')
             ? config.song_switch_mode : 'parallel',
@@ -343,6 +344,11 @@ export function registerConfigHandlers(
       if (body.auto_continue_mode !== undefined) {
         const m = String(body.auto_continue_mode);
         config.auto_continue_mode = (m === 'off' || m === 'same') ? m : 'library';
+      }
+
+      // 更新 whole_home_exclude（全屋排除名单）
+      if (Array.isArray(body.whole_home_exclude)) {
+        config.whole_home_exclude = body.whole_home_exclude.filter((x: any) => typeof x === 'string' && x);
       }
 
       // 更新 stereo_pairs（立体声配对，全屋时去重）
