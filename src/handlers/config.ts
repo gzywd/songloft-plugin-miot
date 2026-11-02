@@ -120,6 +120,7 @@ export function registerConfigHandlers(
           smart_resume_timeout: config.smart_resume_timeout ?? 30,
           auto_continue_mode: (config.auto_continue_mode === 'off' || config.auto_continue_mode === 'same')
             ? config.auto_continue_mode : 'library',
+          stereo_pairs: Array.isArray(config.stereo_pairs) ? config.stereo_pairs : [],
           song_switch_mode: (config.song_switch_mode === 'safe' || config.song_switch_mode === 'skip')
             ? config.song_switch_mode : 'parallel',
           hourly_chime_resume_enabled: !!config.hourly_chime_resume_enabled,
@@ -342,6 +343,13 @@ export function registerConfigHandlers(
       if (body.auto_continue_mode !== undefined) {
         const m = String(body.auto_continue_mode);
         config.auto_continue_mode = (m === 'off' || m === 'same') ? m : 'library';
+      }
+
+      // 更新 stereo_pairs（立体声配对，全屋时去重）
+      if (Array.isArray(body.stereo_pairs)) {
+        config.stereo_pairs = body.stereo_pairs
+          .filter((g: any) => Array.isArray(g) && g.length === 2 && g.every((x: any) => typeof x === 'string' && x))
+          .map((g: string[]) => [g[0], g[1]]);
       }
 
       // 更新 song_switch_mode（切歌预处理）

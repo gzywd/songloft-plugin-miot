@@ -195,6 +195,8 @@ export interface PluginConfig {
   smart_resume_timeout: number;
   /** 队列播完后的行为：off 停止 / same 本歌单随机循环 / library 转主库随机 */
   auto_continue_mode: 'off' | 'same' | 'library';
+  /** 立体声配对设备：每组两台，全屋播放时只推其中一台（说话那台优先） */
+  stereo_pairs: string[][];
   /** 切歌前的预处理：safe=pause+stop / parallel=只stop并并行查型号（默认）/ skip=直接替换 */
   song_switch_mode: 'safe' | 'parallel' | 'skip';
   hourly_chime_resume_enabled?: boolean; // 整点报时后续播，默认关闭
