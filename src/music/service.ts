@@ -1854,6 +1854,43 @@ export class MusicCommandService {
   }
 
   /**
+   * 中文数字 → 阿拉伯数字。
+   * 语音常把「2009」识别成「二零零九」，而库里的歌名是「心痛2009」。
+   * 片段含 十/百/千 时按数值解析（十八 → 18），否则按逐位读法（二零零九 → 2009）。
+   */
+  private chineseNumeralsToArabic(text: string): string {
+    const digit: Record<string, string> = {
+      零: '0', 一: '1', 二: '2', 两: '2', 三: '3', 四: '4',
+      五: '5', 六: '6', 七: '7', 八: '8', 九: '9',
+    };
+    return text.replace(/[零一二两三四五六七八九十百千]+/g, (seg) => {
+      if (!/[十百千]/.test(seg)) {
+        return Array.from(seg).map(ch => digit[ch] ?? ch).join('');
+      }
+      let total = 0;
+      let num = 0;
+      for (const ch of seg) {
+        if (digit[ch] !== undefined) {
+          num = Number(digit[ch]);
+        } else if (ch === '十') {
+          total += (num || 1) * 10; num = 0;
+        } else if (ch === '百') {
+          total += (num || 1) * 100; num = 0;
+        } else if (ch === '千') {
+          total += (num || 1) * 1000; num = 0;
+        }
+      }
+      return String(total + num);
+    });
+  }
+
+  /** 阿拉伯数字 → 中文逐位（库里存中文数字时用，2009 → 二零零九）。 */
+  private arabicToChineseDigits(text: string): string {
+    const map = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+    return text.replace(/\d+/g, (m) => Array.from(m).map(d => map[Number(d)] ?? d).join(''));
+  }
+
+  /**
    * 语音识别噪声清洗：为「整句被识别成歌名」的情况生成候选。
    *
    * 原始索引查询只做一次，未命中才走这里（命中即用，最多试几条）。
@@ -1864,7 +1901,8 @@ export class MusicCommandService {
    *   ④ 歌手+歌名（许嵩的灰色头像 / 灰色头像许嵩的）
    *   ⑤ 多意图粘连（播放灰色头像然后关灯 / 你能不能）
    *   ⑥ 识别出的空格（灰 色 头 像）
-   *   ⑦ 尾部多吞了几个字（逐字截尾，保底 3 字）
+   *   ⑦ 中文数字 vs 阿拉伯数字（心痛二零零九 ↔ 心痛2009）
+   *   ⑧ 尾部多吞了几个字（逐字截尾，保底 3 字）
    */
   private buildSearchAlternatives(term: string): string[] {
     const raw = String(term || '').trim();
@@ -1885,21 +1923,33 @@ export class MusicCommandService {
     cur = cur.replace(/[吧呢啊呀哦嘛呗啦哈哟]+$/g, '');      // ① 句尾语气词
     push(cur);
 
-    cur = cur.replace(/^(请|麻烦|帮我)?(播放|放|来)(一首|一下|一遍|一个|首|个|点|支)?/g, ''); // ② 量词（多余的"播放"也顺带剥掉）
+    push(this.chineseNumeralsToArabic(cur));              // ⑦ 中文数字 → 阿拉伯
+    push(this.arabicToChineseDigits(cur));                // ⑦ 阿拉伯 → 中文数字
+
+    cur = cur.replace(/^(请|麻烦|帮我)?(播放|放|来)(一首|一下|一遍|一个|首|个|点|支)?/g, ''); // ② 量词
     push(cur);
+    push(this.chineseNumeralsToArabic(cur));
+    push(this.arabicToChineseDigits(cur));
 
     const dup = cur.match(/^(.{2,})\1$/);                  // ③ 重复整句
     if (dup) push(dup[1]);
 
     const byDe = cur.split('的').map(x => x.trim()).filter(Boolean); // ④ 歌手+歌名
-    if (byDe.length === 2) { push(byDe[1]); push(byDe[0]); }
+    if (byDe.length === 2) {
+      for (const part of [byDe[1], byDe[0]]) {
+        push(part);
+        push(this.chineseNumeralsToArabic(part));
+        push(this.arabicToChineseDigits(part));
+      }
+    }
 
     // ⑤ 多意图粘连：连接词切前半句
     const SPLIT = /(你能不能|可不可以|能不能|要不要|然后|顺便|还有|帮我|请帮我|麻烦|接着|再把|顺便把)/;
     const head = cur.split(SPLIT)[0].trim();
     push(head);
+    push(this.chineseNumeralsToArabic(head));
 
-    // ⑦ 逐字截尾（保底 3 字，最多 5 次）
+    // ⑧ 逐字截尾（保底 3 字，最多 5 次）
     const base = Array.from(head).length >= 3 ? head : cur;
     const chars = Array.from(base);
     for (let cut = 1; cut <= 5 && chars.length - cut >= 3; cut++) {
