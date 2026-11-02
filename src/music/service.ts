@@ -1832,6 +1832,18 @@ export class MusicCommandService {
       return { source: 'local_index', loc };
     }
 
+    // 语音识别常把前后两句话粘成一个歌名（"播放灰色头像你能不能把灯"），
+    // 整句送进索引必然搜不到。这里按「连接词切分 + 有限截尾」再试几次。
+    for (const alt of this.buildSearchAlternatives(searchTerm)) {
+      const hit = await this.indexingManager.findSongByName(alt);
+      if (hit) {
+        songloft.log.info(
+          `[MusicCommandService] Local search fallback hit: "${alt}" (from "${searchTerm}")`,
+        );
+        return { source: 'local_index', loc: hit };
+      }
+    }
+
     // 尝试查找独立远程歌曲（不在任何歌单中的外部导入歌曲）
     const standalone = await this.indexingManager.findStandaloneSongByName(searchTerm);
     if (standalone) {
@@ -1839,6 +1851,29 @@ export class MusicCommandService {
     }
 
     return null;
+  }
+
+  /**
+   * 为「整句被识别成一个歌名」的情况生成候选：
+   * ① 按连接词切出前半句（你能不能 / 然后 / 顺便 / 帮我…）
+   * ② 在其基础上逐字截尾（最多 4 次，最少保留 3 字）
+   * 只在原句搜不到时调用，命中即用，避免一次失败就整首放弃。
+   */
+  private buildSearchAlternatives(term: string): string[] {
+    const raw = String(term || '').trim();
+    if (!raw) return [];
+    const out: string[] = [];
+    const SPLIT = /(你能不能|可不可以|能不能|要不要|然后|顺便|还有|帮我|请帮我|麻烦)/;
+    const head = raw.split(SPLIT)[0].trim();
+    if (head && head !== raw && Array.from(head).length >= 2) out.push(head);
+
+    const base = head && Array.from(head).length >= 2 ? head : raw;
+    const chars = Array.from(base);
+    for (let cut = 1; cut <= 4 && chars.length - cut >= 3; cut++) {
+      const cand = chars.slice(0, chars.length - cut).join('').trim();
+      if (cand && cand !== raw && !out.includes(cand)) out.push(cand);
+    }
+    return out;
   }
 
   private async findExternalSongCandidate(
